@@ -1,0 +1,7 @@
+Я использовал RazorSQL для просмотра БД. 
+У меня была проблема, что версия Java, которую использует Razor ниже чем у Derby. Поэтому я запускал его с cmd:
+cd C:\Users\danii\AppData\Local\Programs\RazorSQL
+java -jar razorsql.jar
+
+cd C:\Program Files\db-derby-10.17.1.0-bin\bin
+startNetworkServer
