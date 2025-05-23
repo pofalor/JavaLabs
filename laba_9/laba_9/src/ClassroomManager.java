@@ -1,4 +1,5 @@
 import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.*;
@@ -128,39 +129,57 @@ public class ClassroomManager extends JFrame {
     }
 
     private void assignResponsible() {
+        if (classroomCombo.getSelectedItem() == null || responsibleCombo.getSelectedItem() == null) {
+            JOptionPane.showMessageDialog(this, "Выберите аудиторию и ответственного");
+            return;
+        }
+
         try {
             conn.setAutoCommit(false);
 
-            // Получаем выбранные ID из ComboBox
-            String selectedClassroom = (String) classroomCombo.getSelectedItem();
-            String selectedResponsible = (String) responsibleCombo.getSelectedItem();
+            // Получаем выбранные ID
+            int classroomId = getIdFromCombo(classroomCombo.getSelectedItem());
+            int responsibleId = getIdFromCombo(responsibleCombo.getSelectedItem());
 
-            int classroomId = Integer.parseInt(selectedClassroom.split(" - ")[0]);
-            int responsibleId = Integer.parseInt(selectedResponsible.split(" - ")[0]);
-
-            // Проверяем, не существует ли уже такая связь
-            String checkSql = "SELECT 1 FROM CLASSROOM_RESPONSIBLES WHERE ID_CLASSROOM = ? AND ID_RESPONSIBLE = ?";
+            // Проверяем, есть ли уже ответственный у этой аудитории
+            String checkSql = "SELECT 1 FROM CLASSROOM_RESPONSIBLES WHERE ID_CLASSROOM = ?";
             try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
                 checkStmt.setInt(1, classroomId);
-                checkStmt.setInt(2, responsibleId);
+                ResultSet rs = checkStmt.executeQuery();
 
-                if (checkStmt.executeQuery().next()) {
-                    outputArea.append("Эта связь уже существует!\n");
-                    return;
+                if (rs.next()) {
+                    // Если ответственный уже есть - переназначаем
+                    String updateSql = "UPDATE CLASSROOM_RESPONSIBLES SET ID_RESPONSIBLE = ? WHERE ID_CLASSROOM = ?";
+                    try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                        updateStmt.setInt(1, responsibleId);
+                        updateStmt.setInt(2, classroomId);
+                        int rows = updateStmt.executeUpdate();
+
+                        if (rows > 0) {
+                            conn.commit();
+                            outputArea.append("Ответственный переназначен на аудиторию " +
+                                    classroomCombo.getSelectedItem() + "\n");
+                            showAssignments();
+                        }
+                    }
+                } else {
+                    // Если ответственного нет - добавляем новую запись
+                    String insertSql = "INSERT INTO CLASSROOM_RESPONSIBLES (ID_CLASSROOM, ID_RESPONSIBLE) VALUES (?, ?)";
+                    try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                        insertStmt.setInt(1, classroomId);
+                        insertStmt.setInt(2, responsibleId);
+                        int rows = insertStmt.executeUpdate();
+
+                        if (rows > 0) {
+                            conn.commit();
+                            outputArea.append("Ответственный назначен на аудиторию " +
+                                    classroomCombo.getSelectedItem() + "\n");
+                            showAssignments();
+                        }
+                    }
                 }
             }
-
-            // Добавляем новую связь
-            String insertSql = "INSERT INTO CLASSROOM_RESPONSIBLES VALUES (?, ?)";
-            try (PreparedStatement pstmt = conn.prepareStatement(insertSql)) {
-                pstmt.setInt(1, classroomId);
-                pstmt.setInt(2, responsibleId);
-                pstmt.executeUpdate();
-            }
-
-            conn.commit();
-            outputArea.append("Ответственный успешно назначен на аудиторию\n");
-        } catch (SQLException | NumberFormatException e) {
+        } catch (SQLException e) {
             try {
                 conn.rollback();
                 outputArea.append("Ошибка при назначении ответственного: " + e.getMessage() + "\n");
@@ -313,10 +332,18 @@ public class ClassroomManager extends JFrame {
     }
 
     private JPanel createActionPanel() {
-        JPanel panel = new JPanel(new GridLayout(2, 4, 5, 5));
+        JPanel panel = new JPanel(new GridLayout(2, 5, 5, 5));
         panel.setBorder(BorderFactory.createTitledBorder("Действия"));
 
         // Первая строка
+        JButton showClassroomsBtn = new JButton("Все аудитории");
+        showClassroomsBtn.addActionListener(e -> showAllClassrooms());
+        panel.add(showClassroomsBtn);
+
+        JButton showResponsiblesBtn = new JButton("Все ответственные");
+        showResponsiblesBtn.addActionListener(e -> showAllResponsibles());
+        panel.add(showResponsiblesBtn);
+
         JButton showAssignBtn = new JButton("Назначения");
         showAssignBtn.addActionListener(e -> showAssignments());
         panel.add(showAssignBtn);
@@ -324,10 +351,6 @@ public class ClassroomManager extends JFrame {
         JButton phonebookBtn = new JButton("Телефонный справочник");
         phonebookBtn.addActionListener(e -> showPhonebook());
         panel.add(phonebookBtn);
-
-        JButton allResponsiblesBtn = new JButton("Все ответственные");
-        allResponsiblesBtn.addActionListener(e -> showAllResponsibles());
-        panel.add(allResponsiblesBtn);
 
         JButton avgAreaBtn = new JButton("Средняя площадь");
         avgAreaBtn.addActionListener(e -> showAverageArea());
@@ -349,6 +372,10 @@ public class ClassroomManager extends JFrame {
         JButton deleteResponsibleBtn = new JButton("Уд. ответственного");
         deleteResponsibleBtn.addActionListener(e -> deleteResponsible());
         panel.add(deleteResponsibleBtn);
+
+        JButton resetBtn = new JButton("Сбросить данные");
+        resetBtn.addActionListener(e -> resetToDefaults());
+        panel.add(resetBtn);
 
         return panel;
     }
@@ -531,6 +558,70 @@ public class ClassroomManager extends JFrame {
         } catch (SQLException | NumberFormatException e) {
             outputArea.append("Ошибка при редактировании аудитории: " + e.getMessage() + "\n");
         }
+    }
+
+    private void showAllClassrooms() {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT C.ID_CLASSROOM as \"ID\", C.BUILDING as \"Здание\", " +
+                             "C.ROOM_NUMBER as \"Номер\", C.NAME as \"Наименование\", " +
+                             "C.AREA as \"Площадь\", R.FULL_NAME as \"Ответственный\" " +
+                             "FROM CLASSROOMS C " +
+                             "LEFT JOIN CLASSROOM_RESPONSIBLES CR ON C.ID_CLASSROOM = CR.ID_CLASSROOM " +
+                             "LEFT JOIN RESPONSIBLES R ON CR.ID_RESPONSIBLE = R.ID_RESPONSIBLE " +
+                             "ORDER BY 1")) {
+
+            // Создаем модель таблицы на основе ResultSet
+            JTable table = new JTable(buildTableModel(rs));
+            table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+
+            // Настраиваем ширину колонок
+            table.getColumnModel().getColumn(0).setPreferredWidth(50);  // ID
+            table.getColumnModel().getColumn(1).setPreferredWidth(150); // Здание
+            table.getColumnModel().getColumn(2).setPreferredWidth(80);  // Номер
+            table.getColumnModel().getColumn(3).setPreferredWidth(200); // Наименование
+            table.getColumnModel().getColumn(4).setPreferredWidth(80);  // Площадь
+            table.getColumnModel().getColumn(5).setPreferredWidth(250); // Ответственный
+
+            // Создаем диалоговое окно с таблицей
+            JScrollPane scrollPane = new JScrollPane(table);
+            JOptionPane.showMessageDialog(this, scrollPane,
+                    "Список всех аудиторий", JOptionPane.PLAIN_MESSAGE);
+
+        } catch (SQLException e) {
+            outputArea.append("Ошибка при получении списка аудиторий: " + e.getMessage() + "\n");
+        }
+    }
+
+    // Вспомогательный метод для создания модели таблицы из ResultSet
+    private DefaultTableModel buildTableModel(ResultSet rs) throws SQLException {
+        ResultSetMetaData metaData = rs.getMetaData();
+
+        // Получаем названия колонок
+        int columnCount = metaData.getColumnCount();
+        String[] columnNames = new String[columnCount];
+        for (int i = 1; i <= columnCount; i++) {
+            columnNames[i-1] = metaData.getColumnName(i);
+        }
+
+        // Получаем данные
+        java.util.List<Object[]> data = new ArrayList<>();
+        while (rs.next()) {
+            Object[] row = new Object[columnCount];
+            for (int i = 1; i <= columnCount; i++) {
+                row[i-1] = rs.getObject(i);
+                if (row[i-1] == null) row[i-1] = "-";
+            }
+            data.add(row);
+        }
+
+        // Создаем модель таблицы
+        DefaultTableModel model = new DefaultTableModel(columnNames, 0);
+        for (Object[] row : data) {
+            model.addRow(row);
+        }
+
+        return model;
     }
 
     private void deleteClassroom() {
@@ -854,10 +945,10 @@ public class ClassroomManager extends JFrame {
     }
 
     private java.util.List<String> getClassroomsList() throws SQLException {
-        java.util.List<String> classrooms = new java.util.ArrayList<>();
+        java.util.List<String> classrooms = new ArrayList<>();
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT ID_CLASSROOM, BUILDING, ROOM_NUMBER FROM CLASSROOMS")) {
+                     "SELECT ID_CLASSROOM, BUILDING, ROOM_NUMBER FROM CLASSROOMS ORDER BY BUILDING, ROOM_NUMBER")) {
             while (rs.next()) {
                 classrooms.add(rs.getInt("ID_CLASSROOM") + " - " +
                         rs.getString("BUILDING") + " " +
@@ -871,7 +962,7 @@ public class ClassroomManager extends JFrame {
         java.util.List<String> responsibles = new ArrayList<>();
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT ID_RESPONSIBLE, FULL_NAME FROM RESPONSIBLES")) {
+                     "SELECT ID_RESPONSIBLE, FULL_NAME FROM RESPONSIBLES ORDER BY FULL_NAME")) {
             while (rs.next()) {
                 responsibles.add(rs.getInt("ID_RESPONSIBLE") + " - " +
                         rs.getString("FULL_NAME"));
