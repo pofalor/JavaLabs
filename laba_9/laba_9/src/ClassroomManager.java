@@ -1,10 +1,13 @@
 import javax.swing.*;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableColumnModel;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Vector;
 
 public class ClassroomManager extends JFrame {
     private Connection conn;
@@ -125,6 +128,36 @@ public class ClassroomManager extends JFrame {
             } catch (SQLException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private void showResponsibleNamesOnly() {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT FULL_NAME FROM RESPONSIBLES ORDER BY FULL_NAME")) {
+
+            // Создаем список для JList
+            DefaultListModel<String> listModel = new DefaultListModel<>();
+            while (rs.next()) {
+                listModel.addElement(rs.getString("FULL_NAME"));
+            }
+
+            // Создаем компонент списка
+            JList<String> nameList = new JList<>(listModel);
+            nameList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            nameList.setFont(new Font("Arial", Font.PLAIN, 14));
+
+            // Диалоговое окно
+            JDialog dialog = new JDialog(this, "ФИО ответственных", true);
+            dialog.add(new JScrollPane(nameList));
+            dialog.setSize(300, 400);
+            dialog.setLocationRelativeTo(this);
+            dialog.setVisible(true);
+
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Ошибка при получении ФИО ответственных: " + e.getMessage(),
+                    "Ошибка", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -335,7 +368,7 @@ public class ClassroomManager extends JFrame {
         JPanel panel = new JPanel(new GridLayout(2, 5, 5, 5));
         panel.setBorder(BorderFactory.createTitledBorder("Действия"));
 
-        // Первая строка
+        // Первая строка кнопок
         JButton showClassroomsBtn = new JButton("Все аудитории");
         showClassroomsBtn.addActionListener(e -> showAllClassrooms());
         panel.add(showClassroomsBtn);
@@ -343,6 +376,10 @@ public class ClassroomManager extends JFrame {
         JButton showResponsiblesBtn = new JButton("Все ответственные");
         showResponsiblesBtn.addActionListener(e -> showAllResponsibles());
         panel.add(showResponsiblesBtn);
+
+        JButton showNamesOnlyBtn = new JButton("Только ФИО");
+        showNamesOnlyBtn.addActionListener(e -> showResponsibleNamesOnly());
+        panel.add(showNamesOnlyBtn);
 
         JButton showAssignBtn = new JButton("Назначения");
         showAssignBtn.addActionListener(e -> showAssignments());
@@ -352,11 +389,11 @@ public class ClassroomManager extends JFrame {
         phonebookBtn.addActionListener(e -> showPhonebook());
         panel.add(phonebookBtn);
 
+        // Вторая строка кнопок
         JButton avgAreaBtn = new JButton("Средняя площадь");
         avgAreaBtn.addActionListener(e -> showAverageArea());
         panel.add(avgAreaBtn);
 
-        // Вторая строка - операции редактирования/удаления
         JButton editClassroomBtn = new JButton("Изм. аудиторию");
         editClassroomBtn.addActionListener(e -> editClassroom());
         panel.add(editClassroomBtn);
@@ -372,10 +409,6 @@ public class ClassroomManager extends JFrame {
         JButton deleteResponsibleBtn = new JButton("Уд. ответственного");
         deleteResponsibleBtn.addActionListener(e -> deleteResponsible());
         panel.add(deleteResponsibleBtn);
-
-        JButton resetBtn = new JButton("Сбросить данные");
-        resetBtn.addActionListener(e -> resetToDefaults());
-        panel.add(resetBtn);
 
         return panel;
     }
@@ -397,21 +430,56 @@ public class ClassroomManager extends JFrame {
     private void showAllResponsibles() {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT ID_RESPONSIBLE, FULL_NAME " +
+                     "SELECT ID_RESPONSIBLE as \"ID\", " +
+                             "FULL_NAME as \"ФИО\", " +
+                             "POSITION as \"Должность\", " +
+                             "PHONE as \"Телефон\", " +
+                             "AGE as \"Возраст\" " +
                              "FROM RESPONSIBLES ORDER BY FULL_NAME")) {
 
-            outputArea.setText("Список всех ответственных:\n");
-            outputArea.append(String.format("%-5s %-30s\n",
-                    "ID", "ФИО"));
-            outputArea.append("------------------------------------------------------------\n");
+            // Создаем и настраиваем таблицу
+            JTable table = new JTable(buildTableModel(rs));
+            table.setAutoCreateRowSorter(true); // Включаем сортировку
+            table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF); // Отключаем авто-размер
 
-            while (rs.next()) {
-                outputArea.append(String.format("%-5d %-30s\n",
-                        rs.getInt("ID_RESPONSIBLE"),
-                        rs.getString("FULL_NAME")));
-            }
+            // Настраиваем ширину колонок
+            TableColumnModel columnModel = table.getColumnModel();
+            columnModel.getColumn(0).setPreferredWidth(50);  // ID
+            columnModel.getColumn(1).setPreferredWidth(200); // ФИО
+            columnModel.getColumn(2).setPreferredWidth(150); // Должность
+            columnModel.getColumn(3).setPreferredWidth(120); // Телефон
+            columnModel.getColumn(4).setPreferredWidth(70);  // Возраст
+
+            // Добавляем подсветку строк
+            table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+                @Override
+                public Component getTableCellRendererComponent(JTable table, Object value,
+                                                               boolean isSelected, boolean hasFocus, int row, int column) {
+                    Component c = super.getTableCellRendererComponent(table, value,
+                            isSelected, hasFocus, row, column);
+                    if (!isSelected) {
+                        c.setBackground(row % 2 == 0 ? Color.WHITE : new Color(240, 240, 240));
+                    }
+                    return c;
+                }
+            });
+
+            // Создаем панель с прокруткой
+            JScrollPane scrollPane = new JScrollPane(table);
+            scrollPane.setPreferredSize(new Dimension(800, 400));
+
+            // Создаем диалоговое окно
+            JDialog dialog = new JDialog(this, "Список всех ответственных", true);
+            dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+            dialog.add(scrollPane);
+            dialog.pack();
+            dialog.setLocationRelativeTo(this);
+            dialog.setVisible(true);
+
         } catch (SQLException e) {
-            outputArea.append("Ошибка при получении списка ответственных: " + e.getMessage() + "\n");
+            JOptionPane.showMessageDialog(this,
+                    "Ошибка при получении списка ответственных: " + e.getMessage(),
+                    "Ошибка", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -599,29 +667,28 @@ public class ClassroomManager extends JFrame {
 
         // Получаем названия колонок
         int columnCount = metaData.getColumnCount();
-        String[] columnNames = new String[columnCount];
+        Vector<String> columnNames = new Vector<>();
         for (int i = 1; i <= columnCount; i++) {
-            columnNames[i-1] = metaData.getColumnName(i);
+            columnNames.add(metaData.getColumnName(i));
         }
 
         // Получаем данные
-        java.util.List<Object[]> data = new ArrayList<>();
+        Vector<Vector<Object>> data = new Vector<>();
         while (rs.next()) {
-            Object[] row = new Object[columnCount];
+            Vector<Object> row = new Vector<>();
             for (int i = 1; i <= columnCount; i++) {
-                row[i-1] = rs.getObject(i);
-                if (row[i-1] == null) row[i-1] = "-";
+                Object value = rs.getObject(i);
+                row.add(value != null ? value : "-");
             }
             data.add(row);
         }
 
-        // Создаем модель таблицы
-        DefaultTableModel model = new DefaultTableModel(columnNames, 0);
-        for (Object[] row : data) {
-            model.addRow(row);
-        }
-
-        return model;
+        return new DefaultTableModel(data, columnNames) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Запрещаем редактирование
+            }
+        };
     }
 
     private void deleteClassroom() {
