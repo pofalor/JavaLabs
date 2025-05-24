@@ -365,10 +365,10 @@ public class ClassroomManager extends JFrame {
     }
 
     private JPanel createActionPanel() {
-        JPanel panel = new JPanel(new GridLayout(2, 5, 5, 5));
+        JPanel panel = new JPanel(new GridLayout(3, 4, 5, 5));
         panel.setBorder(BorderFactory.createTitledBorder("Действия"));
 
-        // Первая строка кнопок
+        // Первая строка - просмотр данных
         JButton showClassroomsBtn = new JButton("Все аудитории");
         showClassroomsBtn.addActionListener(e -> showAllClassrooms());
         panel.add(showClassroomsBtn);
@@ -385,15 +385,20 @@ public class ClassroomManager extends JFrame {
         showAssignBtn.addActionListener(e -> showAssignments());
         panel.add(showAssignBtn);
 
+        // Вторая строка - основные действия
         JButton phonebookBtn = new JButton("Телефонный справочник");
         phonebookBtn.addActionListener(e -> showPhonebook());
         panel.add(phonebookBtn);
 
-        // Вторая строка кнопок
         JButton avgAreaBtn = new JButton("Средняя площадь");
         avgAreaBtn.addActionListener(e -> showAverageArea());
         panel.add(avgAreaBtn);
 
+        JButton deleteAssignBtn = new JButton("Удалить назначение");
+        deleteAssignBtn.addActionListener(e -> deleteAssignment());
+        panel.add(deleteAssignBtn);
+
+        // Третья строка - редактирование
         JButton editClassroomBtn = new JButton("Изм. аудиторию");
         editClassroomBtn.addActionListener(e -> editClassroom());
         panel.add(editClassroomBtn);
@@ -990,24 +995,64 @@ public class ClassroomManager extends JFrame {
     }
 
     private void deleteAssignment() {
-        String id = JOptionPane.showInputDialog(this, "Введите ID назначения для удаления:");
-        if (id == null || id.trim().isEmpty()) return;
-
         try {
-            String deleteSql = "DELETE FROM CLASSROOM_RESPONSIBLES WHERE ID = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
-                pstmt.setInt(1, Integer.parseInt(id));
-                int rows = pstmt.executeUpdate();
+            // Создаем диалоговое окно для выбора
+            JPanel panel = new JPanel(new GridLayout(2, 2, 5, 5));
 
-                if (rows > 0) {
-                    outputArea.append("Назначение ID " + id + " удалено\n");
-                    showAssignments();
-                } else {
-                    JOptionPane.showMessageDialog(this, "Назначение с таким ID не найдено");
+            // Получаем списки для выбора
+            java.util.List<String> classrooms = getClassroomsList();
+            java.util.List<String> responsibles = getResponsiblesList();
+
+            JComboBox<String> classroomCombo = new JComboBox<>(classrooms.toArray(new String[0]));
+            JComboBox<String> responsibleCombo = new JComboBox<>(responsibles.toArray(new String[0]));
+
+            panel.add(new JLabel("Аудитория:"));
+            panel.add(classroomCombo);
+            panel.add(new JLabel("Ответственный:"));
+            panel.add(responsibleCombo);
+
+            int result = JOptionPane.showConfirmDialog(this, panel,
+                    "Выберите назначение для удаления",
+                    JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE);
+
+            if (result == JOptionPane.OK_OPTION) {
+                // Получаем выбранные ID
+                int classroomId = getIdFromCombo(classroomCombo.getSelectedItem());
+                int responsibleId = getIdFromCombo(responsibleCombo.getSelectedItem());
+
+                // Подтверждение
+                int confirm = JOptionPane.showConfirmDialog(this,
+                        "Удалить назначение?\nАудитория: " + classroomCombo.getSelectedItem() +
+                                "\nОтветственный: " + responsibleCombo.getSelectedItem(),
+                        "Подтверждение удаления",
+                        JOptionPane.YES_NO_OPTION);
+
+                if (confirm == JOptionPane.YES_OPTION) {
+                    // Удаляем запись
+                    String sql = "DELETE FROM CLASSROOM_RESPONSIBLES " +
+                            "WHERE ID_CLASSROOM = ? AND ID_RESPONSIBLE = ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                        pstmt.setInt(1, classroomId);
+                        pstmt.setInt(2, responsibleId);
+
+                        int rows = pstmt.executeUpdate();
+                        if (rows > 0) {
+                            outputArea.append("Назначение удалено: Аудитория ID " + classroomId +
+                                    " -> Ответственный ID " + responsibleId + "\n");
+                            showAssignments();
+                        } else {
+                            JOptionPane.showMessageDialog(this,
+                                    "Такое назначение не найдено",
+                                    "Ошибка", JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
                 }
             }
-        } catch (SQLException | NumberFormatException e) {
-            outputArea.append("Ошибка при удалении назначения: " + e.getMessage() + "\n");
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Ошибка при удалении назначения: " + e.getMessage(),
+                    "Ошибка", JOptionPane.ERROR_MESSAGE);
         }
     }
 
